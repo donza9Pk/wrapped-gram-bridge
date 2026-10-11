@@ -1,110 +1,47 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
-
-/**
- * @title Wrapped Gram Token (WGRAM)
- * @dev Open-source smart contract for Wrapped Gram to facilitate decentralized cross-chain asset transfers.
- * Built for core ecosystem infrastructure and public goods identity verification.
- */
-
-interface IERC20 {
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    event Approval(address indexed owner, address indexed spender, uint256 value);
-
-    function totalSupply() external view return uint256;
-    function balanceOf(address account) external view return uint256;
-    function transfer(address to, uint256 value) external return (bool);
-    function allowance(address owner, address spender) external view return uint256;
-    function approve(address spender, uint256 value) external return (bool);
-    function transferFrom(address from, address to, uint256 value) external return (bool);
-}
-
-contract WrappedGram is IERC20 {
+contract WrappedGram {
     string public constant name = "Wrapped Gram";
     string public constant symbol = "WGRAM";
     uint8 public constant decimals = 18;
-
+    uint256 private _totalSupply;
     mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;
-    
-    uint256 private _totalSupply;
     address public owner;
-
+    uint256 public constant MAX_SUPPLY = 1_000_000_000 * 10**18;
+    mapping(bytes32 => bool) public processed;
+    address public feeCollector;
     event Deposit(address indexed dst, uint256 wad);
     event Withdrawal(address indexed src, uint256 wad);
-
-    modifier onlyOwner() {
-        require(msg.sender == owner, "WGRAM: Caller is not the owner");
-        _;
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    modifier onlyOwner(){ require(msg.sender==owner, "Not owner"); _; }
+    constructor(){ owner = msg.sender; feeCollector = msg.sender; }
+    function transferOwnership(address newOwner) external onlyOwner {
+        require(newOwner!=address(0)); emit OwnershipTransferred(owner,newOwner); owner=newOwner;
     }
-
-    constructor() {
-        owner = msg.sender;
+    function totalSupply() external view returns(uint256){return _totalSupply;}
+    function balanceOf(address a) external view returns(uint256){return _balances[a];}
+    function allowance(address o, address s) external view returns(uint256){return _allowances[o][s];}
+    function transfer(address to, uint256 v) external returns(bool){
+        require(to!=address(0) && _balances[msg.sender]>=v); _balances[msg.sender]-=v; _balances[to]+=v; emit Transfer(msg.sender,to,v); return true;
     }
-
-    function totalSupply() external view override return uint256 {
-        return _totalSupply;
+    function approve(address s, uint256 v) external returns(bool){
+        require(s!=address(0)); _allowances[msg.sender][s]=v; emit Approval(msg.sender,s,v); return true;
     }
-
-    function balanceOf(address account) external view override return uint256 {
-        return _balances[account];
+    function transferFrom(address f, address t, uint256 v) external returns(bool){
+        require(f!=address(0) && t!=address(0) && _balances[f]>=v && _allowances[f][msg.sender]>=v);
+        _balances[f]-=v; _balances[t]+=v; _allowances[f][msg.sender]-=v; emit Transfer(f,t,v); return true;
     }
-
-    function transfer(address to, uint256 value) external override return (bool) {
-        require(to != address(0), "WGRAM: Transfer to the zero address");
-        require(_balances[msg.sender] >= value, "WGRAM: Insufficient balance");
-
-        _balances[msg.sender] -= value;
-        _balances[to] += value;
-
-        emit Transfer(msg.sender, to, value);
-        return true;
+    function depositBridge(address account, uint256 amount, bytes32 gramTxHash) external onlyOwner {
+        require(account!=address(0) &&!processed[gramTxHash] && _totalSupply+amount<=MAX_SUPPLY);
+        processed[gramTxHash]=true; _totalSupply+=amount; _balances[account]+=amount;
+        emit Deposit(account,amount); emit Transfer(address(0),account,amount);
     }
-
-    function allowance(address ownerAddress, address spender) external view override return (uint256) {
-        return _allowances[ownerAddress][spender];
-    }
-
-    function approve(address spender, uint256 value) external override return (bool) {
-        require(spender != address(0), "WGRAM: Approve to the zero address");
-
-        _allowances[msg.sender][spender] = value;
-        emit Approval(msg.sender, spender, value);
-        return true;
-    }
-
-    function transferFrom(address from, address to, uint256 value) external override return (bool) {
-        require(from != address(0), "WGRAM: Transfer from the zero address");
-        require(to != address(0), "WGRAM: Transfer to the zero address");
-        require(_balances[from] >= value, "WGRAM: Insufficient balance");
-        require(_allowances[from][msg.sender] >= value, "WGRAM: Transfer amount exceeds allowance");
-
-        _balances[from] -= value;
-        _balances[to] += value;
-        _allowances[from][msg.sender] -= value;
-
-        emit Transfer(from, to, value);
-        return true;
-    }
-
-    function depositBridge(address account, uint256 amount) external onlyOwner {
-        require(account != address(0), "WGRAM: Mint to the zero address");
-        
-        _totalSupply += amount;
-        _balances[account] += amount;
-        
-        emit Deposit(account, amount);
-        emit Transfer(address(0), account, amount);
-    }
-
-    function withdrawBridge(address account, uint256 amount) external onlyOwner {
-        require(account != address(0), "WGRAM: Burn from the zero address");
-        require(_balances[account] >= amount, "WGRAM: Burn amount exceeds balance");
-
-        _balances[account] -= amount;
-        _totalSupply -= amount;
-
-        emit Withdrawal(account, amount);
-        emit Transfer(account, address(0), amount);
+    function withdrawBridge(address account, uint256 amount, bytes32 gramTxHash) external onlyOwner {
+        require(account!=address(0) && _balances[account]>=amount &&!processed[gramTxHash]);
+        processed[gramTxHash]=true; _balances[account]-=amount; _totalSupply-=amount;
+        emit Withdrawal(account,amount); emit Transfer(account,address(0),amount);
     }
 }
